@@ -124,10 +124,10 @@ export function createPitchScene(host: HTMLElement) {
   }
 
   const home = homePlayers.map((player) => createPlayer(player, 0xb84032, 0));
-  const players = [
-    ...home,
-    ...awayPlayers.map((player) => createPlayer(player, 0xe9e5d4, Math.PI)),
-  ];
+  const away = awayPlayers.map((player) =>
+    createPlayer(player, 0xe9e5d4, Math.PI),
+  );
+  const players = [...home, ...away];
   scene.add(...players);
   const tooltip = host.querySelector<HTMLElement>("#player-tooltip");
   if (!tooltip) throw new Error("Player tooltip not found");
@@ -138,7 +138,7 @@ export function createPitchScene(host: HTMLElement) {
     );
   ball.scale.set(1.5, 0.7, 1);
   scene.add(ball);
-  const passing = setupPassing(scene, home, ball, () => {
+  const passing = setupPassing(scene, home, away, ball, () => {
     renderer.render(scene, camera);
   });
   let zoom = 1;
