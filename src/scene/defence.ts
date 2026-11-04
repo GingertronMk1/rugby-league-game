@@ -4,7 +4,7 @@ import { PlayerPosition, type Player } from "./players";
 /** Advance the line and pursue a carrier who breaks through it. */
 export function updateDefence(
   defenders: THREE.Group[],
-  carrier: THREE.Group,
+  carrier: THREE.Object3D,
   elapsed: number,
   speed: number,
 ) {

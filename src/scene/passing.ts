@@ -65,6 +65,7 @@ export function setupPassing(
   let flight: Flight | null = null;
   let bounce: { velocity: THREE.Vector3 } | null = null;
   let heldPass: { key: PassKey; started: number } | null = null;
+  let highlightedTarget: THREE.Group | undefined;
   const heldMovement = new Set<string>();
   const longPressMs = 450;
   const speed = 18;
@@ -82,8 +83,12 @@ export function setupPassing(
     const candidates = players
       .filter(
         (player) =>
+          player !== current &&
           player !== ruck?.tackled &&
-          player.position.x < current.position.x &&
+          (player.position.x < current.position.x ||
+            (ruck !== null &&
+              current.position.x <= -63.9 &&
+              player.position.x <= current.position.x + 0.1)) &&
           (player.position.z - current.position.z) * direction > 0,
       )
       .sort(
@@ -137,6 +142,7 @@ export function setupPassing(
       ) {
         event.preventDefault();
         heldPass = { key, started: performance.now() };
+        highlightedTarget = targetFor(key, false);
       }
       return;
     }
@@ -171,6 +177,7 @@ export function setupPassing(
     ) {
       event.preventDefault();
       heldPass = { key, started: performance.now() };
+      highlightedTarget = targetFor(key, false);
     }
   }
 
@@ -197,11 +204,9 @@ export function setupPassing(
     }
     if (heldPass?.key !== key) return;
     const now = performance.now();
-    const recipient = targetFor(
-      heldPass.key,
-      now - heldPass.started >= longPressMs,
-    );
+    const recipient = highlightedTarget;
     heldPass = null;
+    highlightedTarget = undefined;
     targetIndicator.visible = false;
     if (recipient && !flight) {
       if (ruck) {
@@ -215,6 +220,7 @@ export function setupPassing(
   function onBlur() {
     heldMovement.clear();
     heldPass = null;
+    highlightedTarget = undefined;
     aimingKick = false;
     targetIndicator.visible = false;
     kickIndicator.visible = false;
@@ -251,6 +257,7 @@ export function setupPassing(
     };
     heldMovement.clear();
     heldPass = null;
+    highlightedTarget = undefined;
     aimingKick = false;
     targetIndicator.visible = false;
     kickIndicator.visible = false;
@@ -273,9 +280,10 @@ export function setupPassing(
         ruck.ready = true;
       }
       const targetPlayer =
-        ruck.ready &&
-        heldPass &&
-        targetFor(heldPass.key, now - heldPass.started >= longPressMs);
+        ruck.ready && heldPass
+          ? targetFor(heldPass.key, now - heldPass.started >= longPressMs)
+          : undefined;
+      highlightedTarget = targetPlayer ?? undefined;
       targetIndicator.visible = Boolean(targetPlayer);
       if (targetPlayer)
         targetIndicator.position.set(
@@ -284,6 +292,7 @@ export function setupPassing(
           targetPlayer.position.z,
         );
     } else if (flight) {
+      updateDefence(defenders, flight.recipient ?? ball, elapsed, speed / 2);
       const progress = Math.min((now - flight.started) / flight.duration, 1);
       ball.position.lerpVectors(flight.from, flight.to, progress);
       ball.position.y += Math.sin(progress * Math.PI) * flight.height;
@@ -369,9 +378,11 @@ export function setupPassing(
           }
         }
       }
+      if (!aimingKick) {
+        updateDefence(defenders, hasBall ? current : ball, elapsed, speed / 2);
+      }
       if (hasBall && !aimingKick) {
         updateSupport(players, current, elapsed);
-        updateDefence(defenders, current, elapsed, speed / 2);
         if (
           now >= tackleCooldown &&
           defenders.some(
@@ -391,6 +402,7 @@ export function setupPassing(
       const target =
         heldPass &&
         targetFor(heldPass.key, now - heldPass.started >= longPressMs);
+      highlightedTarget = target ?? undefined;
       targetIndicator.visible = Boolean(target);
       if (target)
         targetIndicator.position.set(
