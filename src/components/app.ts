@@ -9,7 +9,7 @@ const header = () => {
   </header>`;
 };
 const intro = () => {
-  return `<div class="mb-[22px] sm:mb-7 flex items-end justify-between"><div><div class="text-[10px] font-bold tracking-[.18em] text-[#c5df8b]"><span class="${dot}"></span> THE GREATEST GAME</div><h1 class="mt-3 mb-2 font-display text-[clamp(42px,5vw,70px)] font-bold leading-none tracking-[-.015em] uppercase">Welcome to the field<span class="text-[#c9e787]">.</span></h1><p class="text-[13px] text-[#8d9a8a]">Press H or L to pass left or right to a teammate behind you.</p></div><div class="hidden sm:block border border-[#354536] px-3.5 py-[11px] text-[10px] tracking-[.14em] text-[#aab8a3]"><span class="mr-2 text-[#cce78e]">◉</span> TOP-DOWN VIEW</div></div>`;
+  return `<div class="mb-[22px] sm:mb-7 flex items-end justify-between"><div><div class="text-[10px] font-bold tracking-[.18em] text-[#c5df8b]"><span class="${dot}"></span> THE GREATEST GAME</div><h1 class="mt-3 mb-2 font-display text-[clamp(42px,5vw,70px)] font-bold leading-none tracking-[-.015em] uppercase">Welcome to the field<span class="text-[#c9e787]">.</span></h1><p class="text-[13px] text-[#8d9a8a]">Move with WASD. Tap H or L to pass; hold for a cut-out pass.</p></div><div class="hidden sm:block border border-[#354536] px-3.5 py-[11px] text-[10px] tracking-[.14em] text-[#aab8a3]"><span class="mr-2 text-[#cce78e]">◉</span> TOP-DOWN VIEW</div></div>`;
 };
 const stadium = () => {
   return `<div class="border border-[#384b39] bg-[#1b2a1e] shadow-[0_25px_60px_#0004]">
