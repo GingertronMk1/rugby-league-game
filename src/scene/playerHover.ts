@@ -33,7 +33,7 @@ export function setupPlayerHover(
       return;
     }
 
-    tooltip.textContent = player.position;
+    tooltip.textContent = `${String(player.number)} · ${player.position}`;
     tooltip.hidden = false;
     canvas.style.cursor = "pointer";
     const left = Math.max(
