@@ -4,8 +4,10 @@ type PassKey = "h" | "l";
 interface Flight {
   from: THREE.Vector3;
   to: THREE.Vector3;
-  recipient: THREE.Group;
+  recipient: THREE.Group | null;
   started: number;
+  duration: number;
+  height: number;
 }
 
 /** Controls home possession, movement and passing. */
@@ -30,8 +32,26 @@ export function setupPassing(
   const indicator = ring(0xd4ed88);
   const targetIndicator = ring(0xf9b75e);
   targetIndicator.visible = false;
+  const kickIndicator = ring(0x9bdcf4);
+  const kickArea = new THREE.Mesh(
+    new THREE.CircleGeometry(4, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x9bdcf4,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+    }),
+  );
+  kickArea.rotation.x = -Math.PI / 2;
+  scene.add(kickArea);
+  kickIndicator.visible = false;
+  kickArea.visible = false;
+  const kickTarget = new THREE.Vector3();
+  let aimingKick = false;
+  let hasBall = true;
   let current: THREE.Group = carrier;
   let flight: Flight | null = null;
+  let bounce: { velocity: THREE.Vector3 } | null = null;
   let heldPass: { key: PassKey; started: number } | null = null;
   const heldMovement = new Set<string>();
   const longPressMs = 450;
@@ -71,6 +91,8 @@ export function setupPassing(
       ),
       recipient,
       started: now,
+      duration: 450,
+      height: 2,
     };
     indicator.visible = false;
     targetIndicator.visible = false;
@@ -97,9 +119,29 @@ export function setupPassing(
       event.preventDefault();
       heldMovement.add(key);
     } else if (
+      key === "k" &&
+      !event.repeat &&
+      !flight &&
+      hasBall &&
+      !heldPass &&
+      !aimingKick
+    ) {
+      event.preventDefault();
+      aimingKick = true;
+      heldMovement.clear();
+      kickTarget.set(
+        Math.min(current.position.x + 30, 64),
+        0.18,
+        current.position.z,
+      );
+      kickIndicator.visible = true;
+      kickArea.visible = true;
+    } else if (
       (key === "h" || key === "l") &&
       !event.repeat &&
       !heldPass &&
+      !aimingKick &&
+      hasBall &&
       !flight
     ) {
       event.preventDefault();
@@ -110,6 +152,23 @@ export function setupPassing(
   function onKeyUp(event: KeyboardEvent) {
     const key = event.key.toLowerCase();
     heldMovement.delete(key);
+    if (key === "k" && aimingKick) {
+      aimingKick = false;
+      heldMovement.clear();
+      kickIndicator.visible = false;
+      kickArea.visible = false;
+      indicator.visible = false;
+      hasBall = false;
+      flight = {
+        from: ball.position.clone(),
+        to: new THREE.Vector3(kickTarget.x, 0.7, kickTarget.z),
+        recipient: null,
+        started: performance.now(),
+        duration: 1200,
+        height: 12,
+      };
+      return;
+    }
     if (heldPass?.key !== key) return;
     const now = performance.now();
     const recipient = targetFor(
@@ -124,27 +183,75 @@ export function setupPassing(
   function onBlur() {
     heldMovement.clear();
     heldPass = null;
+    aimingKick = false;
     targetIndicator.visible = false;
+    kickIndicator.visible = false;
+    kickArea.visible = false;
   }
 
   function update(now: number) {
     const elapsed = Math.min((now - previous) / 1000, 0.05);
     previous = now;
     if (flight) {
-      const progress = Math.min((now - flight.started) / 450, 1);
+      const progress = Math.min((now - flight.started) / flight.duration, 1);
       ball.position.lerpVectors(flight.from, flight.to, progress);
-      ball.position.y += Math.sin(progress * Math.PI) * 2;
+      ball.position.y += Math.sin(progress * Math.PI) * flight.height;
       if (progress === 1) {
-        current = flight.recipient;
+        const recipient = flight.recipient;
+        if (!recipient) {
+          const direction = flight.to
+            .clone()
+            .sub(flight.from)
+            .setY(0)
+            .normalize();
+          bounce = { velocity: direction.multiplyScalar(5).setY(6) };
+        }
         flight = null;
-        indicator.visible = true;
-        placeBall();
+        if (recipient) {
+          current = recipient;
+          hasBall = true;
+          indicator.visible = true;
+          placeBall();
+        }
       }
     } else {
+      if (bounce) {
+        bounce.velocity.y -= 20 * elapsed;
+        ball.position.addScaledVector(bounce.velocity, elapsed);
+        if (ball.position.y <= 0.7) {
+          ball.position.y = 0.7;
+          bounce.velocity.y = Math.abs(bounce.velocity.y) * 0.45;
+          bounce.velocity.x *= 0.6;
+          bounce.velocity.z *= 0.6;
+          if (bounce.velocity.y < 1) bounce = null;
+        }
+        ball.position.x = THREE.MathUtils.clamp(ball.position.x, -64, 64);
+        ball.position.z = THREE.MathUtils.clamp(ball.position.z, -33, 33);
+      }
       const dx = Number(heldMovement.has("d")) - Number(heldMovement.has("a"));
       const dz = Number(heldMovement.has("s")) - Number(heldMovement.has("w"));
       const length = Math.hypot(dx, dz);
-      if (length > 0) {
+      if (length > 0 && aimingKick) {
+        kickTarget.x = THREE.MathUtils.clamp(
+          kickTarget.x + (dx / length) * speed * elapsed,
+          Math.min(current.position.x + 3, 64),
+          64,
+        );
+        kickTarget.z = THREE.MathUtils.clamp(
+          kickTarget.z + (dz / length) * speed * elapsed,
+          -33,
+          33,
+        );
+        const offset = new THREE.Vector2(
+          kickTarget.x - current.position.x,
+          kickTarget.z - current.position.z,
+        );
+        if (offset.length() > 50) {
+          offset.setLength(50);
+          kickTarget.x = current.position.x + offset.x;
+          kickTarget.z = current.position.z + offset.y;
+        }
+      } else if (length > 0) {
         current.position.x = THREE.MathUtils.clamp(
           current.position.x + (dx / length) * speed * elapsed,
           -64,
@@ -155,7 +262,25 @@ export function setupPassing(
           -33,
           33,
         );
-        placeBall();
+        if (hasBall) placeBall();
+        else {
+          indicator.position.set(current.position.x, 0.16, current.position.z);
+          if (
+            Math.hypot(
+              current.position.x - ball.position.x,
+              current.position.z - ball.position.z,
+            ) < 2.5
+          ) {
+            hasBall = true;
+            bounce = null;
+            indicator.visible = true;
+            placeBall();
+          }
+        }
+      }
+      if (aimingKick) {
+        kickIndicator.position.copy(kickTarget);
+        kickArea.position.set(kickTarget.x, 0.15, kickTarget.z);
       }
       const target =
         heldPass &&
@@ -181,7 +306,12 @@ export function setupPassing(
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
       cancelAnimationFrame(animation);
-      for (const mesh of [indicator, targetIndicator]) {
+      for (const mesh of [
+        indicator,
+        targetIndicator,
+        kickIndicator,
+        kickArea,
+      ]) {
         scene.remove(mesh);
         mesh.geometry.dispose();
         mesh.material.dispose();
