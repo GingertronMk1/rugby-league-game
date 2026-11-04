@@ -1,7 +1,14 @@
 import * as THREE from "three";
 import { moveTowards, updateSupport } from "./support";
-import { updateDefence } from "./defence";
+import {
+  createRuckDefence,
+  updateDefence,
+  updateRuckDefence,
+  type RuckDefence,
+} from "./defence";
 import { PlayerPosition, type Player } from "./players";
+import { isTry } from "./scoring";
+import { selectKickChaser, updateKickChase } from "./kickChase";
 
 type PassKey = "h" | "l";
 interface Flight {
@@ -20,6 +27,7 @@ export function setupPassing(
   defenders: THREE.Group[],
   ball: THREE.Mesh,
   render: () => void,
+  onTry: () => void,
 ) {
   const carrier = players.at(4);
   if (!carrier) throw new Error("Home team needs a ball carrier");
@@ -50,7 +58,12 @@ export function setupPassing(
   scene.add(kickArea);
   kickIndicator.visible = false;
   kickArea.visible = false;
+  const startingPositions = [...players, ...defenders].map((player) => ({
+    player,
+    position: player.position.clone(),
+  }));
   const kickTarget = new THREE.Vector3();
+  let tryScored = false;
   let ruck: {
     tackled: THREE.Group;
     dummyHalf: THREE.Group;
@@ -58,12 +71,14 @@ export function setupPassing(
     target: THREE.Vector3;
     ready: boolean;
   } | null = null;
+  let defensiveReset: RuckDefence | null = null;
   let tackleCooldown = 0;
   let aimingKick = false;
   let hasBall = true;
   let current: THREE.Group = carrier;
   let flight: Flight | null = null;
   let bounce: { velocity: THREE.Vector3 } | null = null;
+  let kickChaser: THREE.Group | undefined;
   let heldPass: { key: PassKey; started: number } | null = null;
   let highlightedTarget: THREE.Group | undefined;
   const heldMovement = new Set<string>();
@@ -133,6 +148,7 @@ export function setupPassing(
     )
       return;
     const key = event.key.toLowerCase();
+    if (tryScored) return;
     if (ruck) {
       if (
         ruck.ready &&
@@ -184,6 +200,7 @@ export function setupPassing(
   function onKeyUp(event: KeyboardEvent) {
     const key = event.key.toLowerCase();
     heldMovement.delete(key);
+    if (tryScored) return;
     if (ruck && !ruck.ready) return;
     if (key === "k" && aimingKick) {
       aimingKick = false;
@@ -192,6 +209,7 @@ export function setupPassing(
       kickArea.visible = false;
       indicator.visible = false;
       hasBall = false;
+      kickChaser = selectKickChaser(players, current, kickTarget);
       flight = {
         from: ball.position.clone(),
         to: new THREE.Vector3(kickTarget.x, 0.7, kickTarget.z),
@@ -244,6 +262,7 @@ export function setupPassing(
         )
         .at(0);
     if (!dummyHalf) return;
+    defensiveReset = createRuckDefence(defenders, current.position);
     ruck = {
       tackled: current,
       dummyHalf,
@@ -269,6 +288,20 @@ export function setupPassing(
   function update(now: number) {
     const elapsed = Math.min((now - previous) / 1000, 0.05);
     previous = now;
+    if (tryScored) {
+      render();
+      animation = requestAnimationFrame(update);
+      return;
+    }
+    if (defensiveReset && !aimingKick) {
+      const resetComplete = updateRuckDefence(
+        defenders,
+        defensiveReset,
+        elapsed,
+        speed,
+      );
+      if (!ruck && resetComplete) defensiveReset = null;
+    }
     if (ruck) {
       const { tackled, dummyHalf, target, started } = ruck;
       const arrived = moveTowards(dummyHalf, target, 22, elapsed);
@@ -292,7 +325,10 @@ export function setupPassing(
           targetPlayer.position.z,
         );
     } else if (flight) {
-      updateDefence(defenders, flight.recipient ?? ball, elapsed, speed / 2);
+      if (kickChaser && !flight.recipient)
+        updateKickChase(players, current, kickChaser, flight.to, elapsed);
+      if (!defensiveReset)
+        updateDefence(defenders, flight.recipient ?? ball, elapsed, speed / 2);
       const progress = Math.min((now - flight.started) / flight.duration, 1);
       ball.position.lerpVectors(flight.from, flight.to, progress);
       ball.position.y += Math.sin(progress * Math.PI) * flight.height;
@@ -327,6 +363,23 @@ export function setupPassing(
         }
         ball.position.x = THREE.MathUtils.clamp(ball.position.x, -64, 64);
         ball.position.z = THREE.MathUtils.clamp(ball.position.z, -33, 33);
+      }
+      if (!hasBall && kickChaser) {
+        updateKickChase(players, current, kickChaser, ball.position, elapsed);
+        if (
+          ball.position.y <= 2.2 &&
+          Math.hypot(
+            kickChaser.position.x - ball.position.x,
+            kickChaser.position.z - ball.position.z,
+          ) < 2.5
+        ) {
+          current = kickChaser;
+          kickChaser = undefined;
+          hasBall = true;
+          bounce = null;
+          indicator.visible = true;
+          placeBall();
+        }
       }
       const dx = Number(heldMovement.has("d")) - Number(heldMovement.has("a"));
       const dz = Number(heldMovement.has("s")) - Number(heldMovement.has("w"));
@@ -372,28 +425,40 @@ export function setupPassing(
             ) < 2.5
           ) {
             hasBall = true;
+            kickChaser = undefined;
             bounce = null;
             indicator.visible = true;
             placeBall();
           }
         }
       }
-      if (!aimingKick) {
+      if (!aimingKick && !defensiveReset) {
         updateDefence(defenders, hasBall ? current : ball, elapsed, speed / 2);
       }
       if (hasBall && !aimingKick) {
         updateSupport(players, current, elapsed);
-        if (
-          now >= tackleCooldown &&
-          defenders.some(
-            (defender) =>
-              Math.hypot(
-                defender.position.x - current.position.x,
-                defender.position.z - current.position.z,
-              ) < 2.1,
+        const touching = defenders.some(
+          (defender) =>
+            Math.hypot(
+              defender.position.x - current.position.x,
+              defender.position.z - current.position.z,
+            ) < 2.1,
+        );
+        if (touching && now >= tackleCooldown) startRuck(now);
+        else if (
+          !touching &&
+          isTry(
+            current.position,
+            defenders.map((defender) => defender.position),
           )
-        )
-          startRuck(now);
+        ) {
+          tryScored = true;
+          heldMovement.clear();
+          heldPass = null;
+          highlightedTarget = undefined;
+          targetIndicator.visible = false;
+          onTry();
+        }
       }
       if (aimingKick) {
         kickIndicator.position.copy(kickTarget);
@@ -419,6 +484,69 @@ export function setupPassing(
   window.addEventListener("blur", onBlur);
   animation = requestAnimationFrame(update);
   return {
+    restart() {
+      for (const { player, position } of startingPositions)
+        player.position.copy(position);
+      const receivingPositions: Record<PlayerPosition, [number, number]> = {
+        [PlayerPosition.Fullback]: [-30, 0],
+        [PlayerPosition.LeftWing]: [-34, -24],
+        [PlayerPosition.RightWing]: [-34, 24],
+        [PlayerPosition.LeftCentre]: [-25, -23],
+        [PlayerPosition.RightCentre]: [-25, 23],
+        [PlayerPosition.StandOff]: [-22, -12],
+        [PlayerPosition.ScrumHalf]: [-22, 12],
+        [PlayerPosition.LeftProp]: [-14, -18],
+        [PlayerPosition.RightProp]: [-14, 18],
+        [PlayerPosition.Hooker]: [-13, 0],
+        [PlayerPosition.LeftSecondRow]: [-14, -9],
+        [PlayerPosition.RightSecondRow]: [-14, 9],
+        [PlayerPosition.LooseForward]: [-19, 0],
+      };
+      for (const player of players) {
+        const position = (player.userData.player as Player).position;
+        const [x, z] = receivingPositions[position];
+        player.position.set(x, 0, z);
+      }
+      const receiver = players.find(
+        (player) =>
+          (player.userData.player as Player).position ===
+          PlayerPosition.Fullback,
+      );
+      if (!receiver) throw new Error("Home kickoff receiver not found");
+      current = receiver;
+      tryScored = false;
+      hasBall = false;
+      bounce = null;
+      kickChaser = undefined;
+      ruck = null;
+      defensiveReset = null;
+      tackleCooldown = 0;
+      heldMovement.clear();
+      heldPass = null;
+      highlightedTarget = undefined;
+      aimingKick = false;
+      indicator.visible = true;
+      targetIndicator.visible = false;
+      kickIndicator.visible = false;
+      kickArea.visible = false;
+      indicator.position.set(current.position.x, 0.16, current.position.z);
+      const kicker = defenders.find(
+        (player) =>
+          (player.userData.player as Player).position ===
+          PlayerPosition.StandOff,
+      );
+      if (!kicker) throw new Error("Away kickoff taker not found");
+      kicker.position.set(0, 0, 0);
+      ball.position.set(0, 0.7, 0);
+      flight = {
+        from: ball.position.clone(),
+        to: new THREE.Vector3(receiver.position.x, 0.7, receiver.position.z),
+        recipient: receiver,
+        started: performance.now(),
+        duration: 1200,
+        height: 12,
+      };
+    },
     dispose() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);

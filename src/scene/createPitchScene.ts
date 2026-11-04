@@ -138,9 +138,33 @@ export function createPitchScene(host: HTMLElement) {
     );
   ball.scale.set(1.5, 0.7, 1);
   scene.add(ball);
-  const passing = setupPassing(scene, home, away, ball, () => {
-    renderer.render(scene, camera);
-  });
+  const overlay = host.querySelector<HTMLElement>("#try-overlay");
+  const restartButton = host.querySelector<HTMLButtonElement>("#restart-play");
+  const scoreDisplay = document.querySelector<HTMLElement>("#home-score");
+  if (!overlay || !restartButton || !scoreDisplay)
+    throw new Error("Score controls not found");
+  let homeScore = 0;
+  const passing = setupPassing(
+    scene,
+    home,
+    away,
+    ball,
+    () => {
+      renderer.render(scene, camera);
+    },
+    () => {
+      homeScore += 4;
+      scoreDisplay.textContent = String(homeScore);
+      overlay.hidden = false;
+      restartButton.focus();
+    },
+  );
+  const restartPlay = () => {
+    passing.restart();
+    overlay.hidden = true;
+    restartButton.blur();
+  };
+  restartButton.addEventListener("click", restartPlay);
   let zoom = 1;
 
   function resize() {
@@ -176,6 +200,7 @@ export function createPitchScene(host: HTMLElement) {
     },
     dispose() {
       observer.disconnect();
+      restartButton.removeEventListener("click", restartPlay);
       hover.dispose();
       passing.dispose();
       renderer.dispose();
